@@ -5,6 +5,7 @@ import {
   ASSISTANT_NAME,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
+  TELEGRAM_BOT_POOL,
   TRIGGER_PATTERN,
 } from './config.js';
 import './channels/index.js';
@@ -12,6 +13,7 @@ import {
   getChannelFactory,
   getRegisteredChannelNames,
 } from './channels/registry.js';
+import { initBotPool } from './channels/telegram.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -48,6 +50,8 @@ import { logger } from './logger.js';
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
 
+const PID_FILE = path.join('data', 'nanoclaw.pid');
+
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
@@ -56,6 +60,57 @@ let messageLoopRunning = false;
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
+
+/**
+ * Check if a process with the given PID is alive.
+ */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Acquire a PID lock to prevent multiple NanoClaw instances.
+ * Exits the process if another instance is already running.
+ */
+function acquirePidLock(): void {
+  if (fs.existsSync(PID_FILE)) {
+    try {
+      const existingPid = parseInt(fs.readFileSync(PID_FILE, 'utf-8').trim(), 10);
+      if (!isNaN(existingPid) && isProcessAlive(existingPid)) {
+        logger.fatal(
+          { existingPid },
+          'Another instance is already running. Exiting to prevent duplicates.',
+        );
+        process.exit(1);
+      }
+      logger.warn({ existingPid }, 'Stale PID file found, overwriting');
+    } catch {
+      logger.warn('Could not read PID file, overwriting');
+    }
+  }
+  fs.mkdirSync(path.dirname(PID_FILE), { recursive: true });
+  fs.writeFileSync(PID_FILE, String(process.pid));
+  logger.info({ pid: process.pid }, 'PID lock acquired');
+}
+
+function releasePidLock(): void {
+  try {
+    if (fs.existsSync(PID_FILE)) {
+      const storedPid = parseInt(fs.readFileSync(PID_FILE, 'utf-8').trim(), 10);
+      if (storedPid === process.pid) {
+        fs.unlinkSync(PID_FILE);
+        logger.info('PID lock released');
+      }
+    }
+  } catch {
+    // Best-effort cleanup
+  }
+}
 
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
@@ -448,6 +503,7 @@ function ensureContainerSystemRunning(): void {
 }
 
 async function main(): Promise<void> {
+  acquirePidLock();
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');
@@ -456,6 +512,7 @@ async function main(): Promise<void> {
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    releasePidLock();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
@@ -495,6 +552,11 @@ async function main(): Promise<void> {
   if (channels.length === 0) {
     logger.fatal('No channels connected');
     process.exit(1);
+  }
+
+  // Initialize Telegram bot pool for agent teams (swarm)
+  if (TELEGRAM_BOT_POOL.length > 0) {
+    await initBotPool(TELEGRAM_BOT_POOL);
   }
 
   // Start subsystems (independently of connection handler)
