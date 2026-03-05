@@ -59,6 +59,38 @@ Keep messages clean and readable for WhatsApp.
 
 This is the **main channel**, which has elevated privileges.
 
+## Board Management
+
+Board tools are main-group tools. Use them to track actionable work.
+
+Create tasks when:
+- The user explicitly asks to track something
+- A conversation reveals a bug, feature request, or action item
+- A scheduled task discovers an issue worth tracking
+- A support investigation yields follow-up work
+
+Update tasks when:
+- New information appears for an existing task
+- Meaningful progress is made and should be added as notes
+- Priority should change based on new context
+
+Close tasks when:
+- Work is completed and the user confirms
+- The issue is resolved externally
+- The task is no longer relevant
+
+Do not create tasks when:
+- The request is a trivial one-off question/answer
+- The work is already tracked
+- The need is a temporary reminder (use `schedule_task`)
+
+Task hygiene:
+- Always run `board_search_tasks` before `board_create_task`
+- Use descriptive titles in this format: `Action - key-identifier`
+- Link source context (Slack thread, Plain thread, or relevant chat context ID/URL)
+- Use `personal-assistant` (`aaf45ddd`) unless the user specifies another board
+- Priority mapping: `high` = urgent/blocking, `medium` = normal/default, `low` = nice-to-have
+
 ## Container Mounts
 
 Main has read-only access to the project and read-write access to its group folder:
